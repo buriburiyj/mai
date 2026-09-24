@@ -1,0 +1,261 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from difflib import get_close_matches
+
+
+@dataclass(frozen=True, slots=True)
+class CommandSpec:
+    name: str
+    usage: str
+    description: str
+    category: str
+    aliases: tuple[str, ...] = ()
+
+
+COMMAND_SPECS: tuple[CommandSpec, ...] = (
+    CommandSpec(
+        "help",
+        "/help [command]",
+        "전체 명령 또는 특정 명령의 도움말을 표시합니다.",
+        "기본",
+    ),
+    CommandSpec(
+        "status",
+        "/status",
+        "현재 Provider, Skill, MCP 및 도구 설정을 표시합니다.",
+        "기본",
+    ),
+    CommandSpec(
+        "about",
+        "/about",
+        "MAI 프로젝트 정보를 표시합니다.",
+        "기본",
+    ),
+    CommandSpec(
+        "version",
+        "/version",
+        "MAI와 런타임 버전을 표시합니다.",
+        "기본",
+    ),
+    CommandSpec(
+        "doctor",
+        "/doctor",
+        "Skill, MCP 및 기본 설정 상태를 진단합니다.",
+        "기본",
+    ),
+    CommandSpec(
+        "pwd",
+        "/pwd",
+        "현재 작업 디렉터리를 표시합니다.",
+        "기본",
+    ),
+    CommandSpec(
+        "context",
+        "/context",
+        "현재 대화 컨텍스트 사용량을 표시합니다.",
+        "기본",
+    ),
+    CommandSpec(
+        "provider",
+        "/provider [list|use <name>|auto|<name>]",
+        (
+            "AI Provider를 조회하거나 변경합니다. "
+            "기존 문법 `/provider <name>`도 지원합니다."
+        ),
+        "Provider",
+        aliases=("providers", "models"),
+    ),
+    CommandSpec(
+        "skill",
+        "/skill [list|show <name>|use <name>|auto|off|reload|<name>]",
+        "Agent Skill을 조회하거나 변경합니다.",
+        "Skill",
+        aliases=("skills",),
+    ),
+    CommandSpec(
+        "mcp",
+        "/mcp [list|status|use <server>|off|<server>]",
+        "MCP 서버를 조회하거나 변경합니다.",
+        "MCP",
+    ),
+    CommandSpec(
+        "tools",
+        "/tools [list|desc|on|off]",
+        "로컬 도구를 조회하거나 활성화합니다.",
+        "도구",
+    ),
+    CommandSpec(
+        "tokens",
+        "/tokens [512-8192]",
+        "최대 출력 토큰 수를 조회하거나 변경합니다.",
+        "대화",
+    ),
+    CommandSpec(
+        "cancel",
+        "/cancel",
+        "현재 실행 중인 요청을 취소합니다.",
+        "대화",
+    ),
+    CommandSpec(
+        "clear",
+        "/clear",
+        "화면의 대화 내용을 지웁니다.",
+        "세션",
+        aliases=("new", "reset"),
+    ),
+    CommandSpec(
+        "copy",
+        "/copy",
+        "전체 대화를 클립보드에 복사합니다.",
+        "세션",
+    ),
+    CommandSpec(
+        "exit",
+        "/exit",
+        "MAI를 종료합니다.",
+        "기본",
+        aliases=("quit", "q"),
+    ),
+)
+
+
+_COMMAND_INDEX = {
+    key: spec for spec in COMMAND_SPECS for key in (spec.name, *spec.aliases)
+}
+
+
+def resolve_command(name: str) -> CommandSpec | None:
+    return _COMMAND_INDEX.get(name.lower())
+
+
+def command_suggestions() -> list[str]:
+    suggestions: list[str] = []
+
+    for spec in COMMAND_SPECS:
+        suggestions.append(f"/{spec.name}")
+        suggestions.extend(f"/{alias}" for alias in spec.aliases)
+
+    suggestions.extend(
+        (
+            "/provider list",
+            "/provider auto",
+            "/skill list",
+            "/skill auto",
+            "/skill off",
+            "/mcp list",
+            "/mcp status",
+            "/mcp off",
+            "/tools list",
+            "/tools desc",
+            "/tools on",
+            "/tools off",
+            "/tokens 8192",
+        )
+    )
+
+    return sorted(set(suggestions))
+
+
+def suggest_commands(name: str, limit: int = 3) -> list[str]:
+    matches = get_close_matches(
+        name.lower(),
+        sorted(_COMMAND_INDEX),
+        n=limit,
+        cutoff=0.35,
+    )
+    return [f"/{match}" for match in matches]
+
+
+def render_help(command: str | None = None) -> str:
+    if command:
+        normalized = command.removeprefix("/").lower()
+        spec = resolve_command(normalized)
+
+        if spec is None:
+            suggestions = suggest_commands(normalized)
+            hint = (
+                "\n\n혹시 다음 명령을 찾으셨나요?\n\n"
+                + "\n".join(f"- `{item}`" for item in suggestions)
+                if suggestions
+                else ""
+            )
+            return f"알 수 없는 명령입니다: `/{normalized}`{hint}"
+
+        aliases = (
+            ", ".join(f"`/{alias}`" for alias in spec.aliases)
+            if spec.aliases
+            else "없음"
+        )
+
+        return (
+            f"### `{spec.usage}`\n\n"
+            f"{spec.description}\n\n"
+            f"- **분류:** {spec.category}\n"
+            f"- **별칭:** {aliases}"
+        )
+
+    rows = [
+        "| 분류 | 명령어 | 설명 |",
+        "| :--- | :--- | :--- |",
+    ]
+
+    for spec in COMMAND_SPECS:
+        aliases = (
+            ", ".join(f"`/{alias}`" for alias in spec.aliases) if spec.aliases else ""
+        )
+        description = spec.description
+        if aliases:
+            description += f" — 별칭: {aliases}"
+
+        usage = spec.usage.replace("|", "\\|")
+        rows.append(f"| {spec.category} | `{usage}` | {description} |")
+
+    rows.extend(
+        (
+            "",
+            "> 자세한 설명은 `/help <command>`로 확인할 수 있습니다.",
+            "",
+            (
+                "> 모든 slash command는 AI Provider로 전송되지 않고 "
+                "MAI에서 직접 처리됩니다."
+            ),
+        )
+    )
+    return "\n".join(rows)
+
+
+ALIAS_DEFAULTS: dict[str, tuple[str, ...]] = {
+    "providers": ("list",),
+    "models": ("list",),
+    "skills": ("list",),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedCommand:
+    raw_name: str
+    arguments: list[str]
+    spec: CommandSpec | None
+    suggestions: list[str]
+
+
+def parse_command(text: str) -> ParsedCommand | None:
+    """Parse slash command text. Returns None if it is not a command."""
+    parts = text.strip().split()
+    if not parts or not parts[0].startswith("/"):
+        return None
+
+    raw_name = parts[0][1:].lower()
+    arguments = parts[1:]
+    if not arguments:
+        arguments = list(ALIAS_DEFAULTS.get(raw_name, ()))
+
+    spec = resolve_command(raw_name)
+    suggestions = [] if spec else suggest_commands(raw_name)
+    return ParsedCommand(
+        raw_name=raw_name,
+        arguments=arguments,
+        spec=spec,
+        suggestions=suggestions,
+    )
